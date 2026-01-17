@@ -5,6 +5,8 @@ import os
 import pickle
 from contextlib import nullcontext
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 import tiktoken
 from model import GPTConfig, GPT
 
@@ -84,6 +86,9 @@ x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 with torch.no_grad():
     with ctx:
         for k in range(num_samples):
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(decode(y[0].tolist()))
-            print('---------------')
+            y, per_loop_time = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
+            per_loop_time = np.diff(per_loop_time, prepend=0)
+            plt.plot(per_loop_time)
+        plt.show()
+            # print(decode(y[0].tolist()))
+            # print('---------------')
