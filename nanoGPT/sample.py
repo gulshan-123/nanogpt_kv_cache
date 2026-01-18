@@ -83,14 +83,14 @@ start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 # print(f"{x=}")
 
-avg_per_loop=[]
-tot_inference_time=[]
-max_token=range(10, max_new_tokens + 1, 10)
-max_token=[10]
+# max_token=range(10, max_new_tokens + 1, 10)
+max_token=[100]
 # run generation
 with torch.no_grad():
     with ctx:
         for k in range(num_samples):
+            avg_per_loop=[]
+            tot_inference_time=[]
             for max_new_token in max_token:
                 y, per_loop_time = model.generate(x, max_new_token, temperature=temperature, top_k=top_k)
                 per_loop_time = np.diff(per_loop_time, prepend=0)

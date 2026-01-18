@@ -70,14 +70,14 @@ class CausalSelfAttention(nn.Module):
         assert ((self.k_cache is None) == self.first_pass)
         if  self.first_pass:
             assert self.k_cache is None, "self cache not None?"
-            print("Hello Worlds")
+            # print("Hello Worlds")
             # first time caching
             self.k_cache=k
             self.v_cache=v
         else:
             assert self.k_cache is not None
             assert N==1, f"only one token is not being passed {N=}"
-            print(f"{self.k_cache.size()=}")
+            # print(f"{self.k_cache.size()=}")
             b,nh,n,d=self.k_cache.size()
             self.k_cache=torch.cat((self.k_cache, k), dim=2)
             self.v_cache=torch.cat((self.v_cache, v), dim=2)
@@ -342,6 +342,12 @@ class GPT(nn.Module):
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
         mfu = flops_achieved / flops_promised
         return mfu
+    
+    def clear_cache(self):
+        for block in self.transformer.h:
+            block.attn.k_cache=None
+            block.attn.v_cache=None
+            block.attn.first_pass=True
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
@@ -374,7 +380,8 @@ class GPT(nn.Module):
             # append sampled index to the running sequence and continue
             generated_idx.extend(idx[0])
             idx = idx_next
-            print(f"{loop=},{idx=}\n{idx_next=}")
+            # print(f"{loop=},{idx=}\n{idx_next=}")
             if DEBUG:
                 per_loop_time.append(time.time() - t)
+        self.clear_cache()
         return generated_idx, per_loop_time
