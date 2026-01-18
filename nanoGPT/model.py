@@ -66,15 +66,18 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         q = q.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         v = v.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
-
+        # print("forwardedddd")
+        assert ((self.k_cache is None) == self.first_pass)
         if  self.first_pass:
             assert self.k_cache is None, "self cache not None?"
+            print("Hello Worlds")
             # first time caching
             self.k_cache=k
             self.v_cache=v
         else:
             assert self.k_cache is not None
             assert N==1, f"only one token is not being passed {N=}"
+            print(f"{self.k_cache.size()=}")
             b,nh,n,d=self.k_cache.size()
             self.k_cache=torch.cat((self.k_cache, k), dim=2)
             self.v_cache=torch.cat((self.v_cache, v), dim=2)
@@ -101,12 +104,12 @@ class CausalSelfAttention(nn.Module):
                 pass
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            print(f"{att.size()=}, {v.size()}")
+            # print(f"{att.size()=}, {v.size()}")
             y = att @ self.v_cache # (B, nh, N, N) x (B, nh, N, d) -> (B, nh, N, d)
             # In case of cahing:
             # b, nh, 1, n X b, nh, n, d --> b, nh, 1, d
 
-        y = y.transpose(1, 2).contiguous().view(B, y.size(dim=2), E) # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, N, E) # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -205,11 +208,11 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, start_pos=0):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        pos = torch.arange(start_pos, t + start_pos, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
@@ -348,6 +351,7 @@ class GPT(nn.Module):
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
         generated_idx=[]
+        start_pos = 0
         if DEBUG:
             per_loop_time = []
             t = time.time()
@@ -355,7 +359,8 @@ class GPT(nn.Module):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
+            logits, _ = self(idx_cond, start_pos=start_pos)
+            start_pos += idx_cond.size(dim=1)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options

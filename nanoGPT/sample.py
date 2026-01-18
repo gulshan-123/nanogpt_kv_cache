@@ -81,12 +81,12 @@ if start.startswith('FILE:'):
         start = f.read()
 start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
-print(f"{x=}")
+# print(f"{x=}")
 
 avg_per_loop=[]
 tot_inference_time=[]
 max_token=range(10, max_new_tokens + 1, 10)
-max_token=[100]
+max_token=[10]
 # run generation
 with torch.no_grad():
     with ctx:
