@@ -83,8 +83,8 @@ start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 # print(f"{x=}")
 
-# max_token=range(10, max_new_tokens + 1, 10)
-max_token=[100]
+max_token=range(10, max_new_tokens + 1, 10)
+# max_token=[100]
 # run generation
 with torch.no_grad():
     with ctx:
