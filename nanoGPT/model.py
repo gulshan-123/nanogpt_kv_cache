@@ -338,5 +338,4 @@ class GPT(nn.Module):
 
             if DEBUG:
                 per_loop_time.append(time.time() - t)
-
         return idx, per_loop_time
