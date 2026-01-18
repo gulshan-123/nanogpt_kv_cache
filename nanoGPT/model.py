@@ -54,6 +54,9 @@ class CausalSelfAttention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
+        self.k_cache = None
+        self.v_cache = None
+        self.first_pass = True
 
     def forward(self, x):
         B, N, E = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -64,21 +67,48 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         v = v.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
 
+        if  self.k_cache is None:
+            # first time caching
+            self.k_cache=k
+            self.v_cache=v
+        else:
+            assert N==1, f"only one token is not being passed {N=}"
+            b,nh,n,d=self.k_cache.size()
+            self.k_cache=torch.cat((self.k_cache, k), dim=2)
+            self.v_cache=torch.cat((self.v_cache, v), dim=2)
+            assert self.k_cache.size()==(b,nh,n+1,d)
+
         # causal self-attention; Self-attend: (B, nh, N, d) x (B, nh, d, N) -> (B, nh, N, N)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:,:,:N,:N] == 0, float('-inf'))
+            # in case of single token:
+            # q: b, nh, 1, d   k: b, nh, d, n ==> b, nh, 1, n
+            att = (q @ self.k_cache.transpose(-2, -1)) * (1.0 / math.sqrt(self.k_cache.size(-1)))
+            if self.first_pass:
+                assert att.size() == (B, self.n_head, N, N)
+                att = att.masked_fill(self.bias[:,:,:N,:N] == 0, float('-inf'))
+                assert att.size() == (B, self.n_head, N, N)
+            else:
+                # Note, here N=1
+                assert att.size() == (B, self.n_head, 1, self.k_cache.size(dim=-2)), \
+                    f"{q.size()=}, {att.size()=}, {self.k_cache.size()}"
+                # no need for masking, as everything is of before
+                pass
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, N, E) # re-assemble all head outputs side by side
+            print(f"{att.size()=}, {v.size()}")
+            y = att @ self.v_cache # (B, nh, N, N) x (B, nh, N, d) -> (B, nh, T, d)
+            # In case of cahing:
+            # b, nh, 1, n X b, nh, n, d --> b, nh, 1, d
+
+        y = y.transpose(1, 2).contiguous().view(B, y.size(dim=2), E) # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
+        self.first_pass = False
         return y
 
 class MLP(nn.Module):
@@ -318,7 +348,7 @@ class GPT(nn.Module):
         if DEBUG:
             per_loop_time = []
             t = time.time()
-        for _ in range(max_new_tokens):
+        for loop in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
@@ -334,8 +364,8 @@ class GPT(nn.Module):
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
-
+            idx = idx_next
+            print(f"{loop=},{idx=}\n{idx_next=}")
             if DEBUG:
                 per_loop_time.append(time.time() - t)
         return idx, per_loop_time
