@@ -67,11 +67,13 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         v = v.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
 
-        if  self.k_cache is None:
+        if  self.first_pass:
+            assert self.k_cache is None, "self cache not None?"
             # first time caching
             self.k_cache=k
             self.v_cache=v
         else:
+            assert self.k_cache is not None
             assert N==1, f"only one token is not being passed {N=}"
             b,nh,n,d=self.k_cache.size()
             self.k_cache=torch.cat((self.k_cache, k), dim=2)
@@ -100,7 +102,7 @@ class CausalSelfAttention(nn.Module):
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             print(f"{att.size()=}, {v.size()}")
-            y = att @ self.v_cache # (B, nh, N, N) x (B, nh, N, d) -> (B, nh, T, d)
+            y = att @ self.v_cache # (B, nh, N, N) x (B, nh, N, d) -> (B, nh, N, d)
             # In case of cahing:
             # b, nh, 1, n X b, nh, n, d --> b, nh, 1, d
 
@@ -345,6 +347,7 @@ class GPT(nn.Module):
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
+        generated_idx=[]
         if DEBUG:
             per_loop_time = []
             t = time.time()
@@ -364,8 +367,9 @@ class GPT(nn.Module):
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
+            generated_idx.extend(idx[0])
             idx = idx_next
             print(f"{loop=},{idx=}\n{idx_next=}")
             if DEBUG:
                 per_loop_time.append(time.time() - t)
-        return idx, per_loop_time
+        return generated_idx, per_loop_time
