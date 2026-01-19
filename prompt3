@@ -1,0 +1,1 @@
+The Transformer architecture, first introduced in the paper "Attention Is All You Need," relies heavily on a mechanism known as self-attention. Unlike previous recurrent neural networks, transformers process input sequences in parallel, which significantly speeds up training on modern GPUs. The key components include multi-head attention and a position-wise feed-forward network.
