@@ -98,6 +98,7 @@ class CausalSelfAttention(nn.Module):
                 assert att.size() == (B, self.n_head, N, N)
             else:
                 # Note, here N=1
+                assert N==1, "Violated single token generation after first pass!!"
                 assert att.size() == (B, self.n_head, 1, self.k_cache.size(dim=-2)), \
                     f"{q.size()=}, {att.size()=}, {self.k_cache.size()}"
                 # no need for masking, as everything is of before
