@@ -386,3 +386,17 @@ class GPT(nn.Module):
                 per_loop_time.append(time.time() - t)
         self.clear_cache()
         return generated_idx, per_loop_time
+
+    @torch.no_grad()
+    def generate_batch(self, indices, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Assuming indices will be list of idx to be used in generate function.
+        Also, max_new_token, temperature, top_k will be single number, same for all the prompts.
+        """
+        generated_indices=[]
+        per_loop_times=[]
+        for idx in indices:
+            generated_idx, per_loop_time = self.generate(idx, max_new_tokens, temperature, top_k)
+            generated_indices.append(generated_idx)
+            per_loop_times.append(per_loop_time)
+        return generated_indices, per_loop_times
