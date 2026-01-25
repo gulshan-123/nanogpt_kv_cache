@@ -16,6 +16,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from prefix_tree import PrefixTree
+
 DEBUG = True
 
 class LayerNorm(nn.Module):
@@ -57,8 +59,10 @@ class CausalSelfAttention(nn.Module):
         self.k_cache = None
         self.v_cache = None
         self.first_pass = True
+        self.shared_cache = PrefixTree()
 
-    def forward(self, x):
+    def forward(self, x, encoding=None):
+        print(encoding)
         B, N, E = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -142,8 +146,8 @@ class Block(nn.Module):
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, encoding=None):
+        x = x + self.attn(self.ln_1(x), encoding)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -209,7 +213,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None, start_pos=0):
+    def forward(self, idx, targets=None, start_pos=0, encoding=None):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -220,7 +224,7 @@ class GPT(nn.Module):
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, encoding)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -357,6 +361,7 @@ class GPT(nn.Module):
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
+        encoding=idx[0].clone().detach()
         generated_idx=[]
         start_pos = 0
         if DEBUG:
@@ -366,7 +371,7 @@ class GPT(nn.Module):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond, start_pos=start_pos)
+            logits, _ = self(idx_cond, start_pos=start_pos, encoding=encoding)
             start_pos += idx_cond.size(dim=1)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature

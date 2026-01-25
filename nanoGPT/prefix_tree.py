@@ -2,14 +2,12 @@
 
 class Node:
     def __init__(self):
-        self.k:int
-        self.v:int
+        self.k:int = None
+        self.v:int = None
         self.child: dict[int, "Node"] = dict()
     def insert(self, k: int, v: int):
         self.k = k
         self.v = v
-    def add_child(self, edge_val: int, child_node:"Node"):
-        self.child[edge_val] = child_node
 
 class PrefixTree:
     def __init__(self):
@@ -18,6 +16,7 @@ class PrefixTree:
         assert len(k_val) == len(v_val) == len(embedding)
         curr_node = self.root if start_node is None else start_node
         for token, k, v in zip(embedding, k_val, v_val):
+            assert isinstance(token, int)
             if token in curr_node.child:
                 curr_node = curr_node.child[token]
             else:
