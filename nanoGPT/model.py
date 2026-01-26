@@ -62,22 +62,63 @@ class CausalSelfAttention(nn.Module):
         self.shared_cache = PrefixTree()
 
     def forward(self, x, encoding=None):
-        print(encoding)
+        # print(encoding)
         B, N, E = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+        
+        n_cached = 0
+        last_node = None
+
+        if self.first_pass and encoding is not None:
+            indices = encoding.tolist()
+            k_cached_list, v_cached_list, last_node = self.shared_cache.longest_match(indices)
+            n_cached = len(k_cached_list)
+
+            if n_cached > 0:
+                k_cached = torch.cat(k_cached_list, dim=2)
+                v_cached = torch.cat(v_cached_list, dim=2)
+
+                self.k_cache = k_cached
+                self.v_cache = v_cached
+                x_input = x[:, n_cached:, :]
+            else:
+                x_input = x
+        else:
+            x_input = x
+
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
-        q = q.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
-        v = v.view(B, N, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
+        # here changing N to -1 as the size of this dimension may vary based on the number of cache hit
+        q, k, v  = self.c_attn(x_input).split(self.n_embd, dim=2)
+        k = k.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
+        q = q.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
+        v = v.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
+        print(f"{k.size()=}")
+        print(f"{v.size()=}")
         # print("forwardedddd")
         assert ((self.k_cache is None) == self.first_pass)
         if  self.first_pass:
-            assert self.k_cache is None, "self cache not None?"
-            # print("Hello Worlds")
-            # first time caching
-            self.k_cache=k
-            self.v_cache=v
+            if n_cached > 0:
+                self.k_cache = torch.cat((self.k_cache, k), dim=2)
+                self.v_cache = torch.cat((self.v_cache, v), dim=2)
+
+                new_indices=encoding.tolist()[n_cached:]
+                self.shared_cache.insert_token(new_indices, 
+                                               [t.unsqueeze(2) for t in k.unbind(2)],
+                                               [t.unsqueeze(2) for t in v.unbind(2)],
+                                               start_node=last_node)
+            else:
+                assert self.k_cache is None, "self cache not None?"
+                # print("Hello Worlds")
+                # first time caching
+                self.k_cache=k
+                self.v_cache=v
+                if encoding is not None:
+                    indices = encoding[0].tolist()
+                    self.shared_cache.insert_token(
+                        indices, 
+                        [t.unsqueeze(2) for t in k.unbind(2)], 
+                        [t.unsqueeze(2) for t in v.unbind(2)]
+                    )
         else:
             assert self.k_cache is not None
             assert N==1, f"only one token is not being passed {N=}"
@@ -98,7 +139,7 @@ class CausalSelfAttention(nn.Module):
             att = (q @ self.k_cache.transpose(-2, -1)) * (1.0 / math.sqrt(self.k_cache.size(-1)))
             if self.first_pass:
                 assert att.size() == (B, self.n_head, N, N)
-                att = att.masked_fill(self.bias[:,:,:N,:N] == 0, float('-inf'))
+                att = att.masked_fill(self.bias[:,:,:q.size(2),:self.k_cache.size(2)] == 0, float('-inf'))
                 assert att.size() == (B, self.n_head, N, N)
             else:
                 # Note, here N=1
@@ -114,8 +155,10 @@ class CausalSelfAttention(nn.Module):
             # In case of cahing:
             # b, nh, 1, n X b, nh, n, d --> b, nh, 1, d
 
-        y = y.transpose(1, 2).contiguous().view(B, N, E) # re-assemble all head outputs side by side
-
+        y = y.transpose(1, 2).contiguous().view(B, -1, E) # re-assemble all head outputs side by side
+        if self.first_pass and n_cached > 0:
+            zeros = torch.zeros((B, n_cached, E), device=y.device, dtype=y.dtype)
+            y = torch.cat([zeros, y], dim=1)
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         self.first_pass = False
