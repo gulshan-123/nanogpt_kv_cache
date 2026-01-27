@@ -67,7 +67,7 @@ class CausalSelfAttention(nn.Module):
         
         n_cached = 0
         last_node = None
-
+        assert ((self.k_cache is None) == self.first_pass)
         if self.first_pass and encoding is not None:
             indices = encoding.tolist()
             k_cached_list, v_cached_list, last_node = self.shared_cache.longest_match(indices)
@@ -92,10 +92,9 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         q = q.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
         v = v.view(B, -1, self.n_head, E // self.n_head).transpose(1, 2) # (B, nh, N, d)
-        print(f"{k.size()=}")
-        print(f"{v.size()=}")
+        # print(f"{k.size()=}")
+        # print(f"{v.size()=}")
         # print("forwardedddd")
-        assert ((self.k_cache is None) == self.first_pass)
         if  self.first_pass:
             if n_cached > 0:
                 self.k_cache = torch.cat((self.k_cache, k), dim=2)
@@ -113,7 +112,7 @@ class CausalSelfAttention(nn.Module):
                 self.k_cache=k
                 self.v_cache=v
                 if encoding is not None:
-                    indices = encoding[0].tolist()
+                    indices = encoding.tolist()
                     self.shared_cache.insert_token(
                         indices, 
                         [t.unsqueeze(2) for t in k.unbind(2)], 
@@ -138,9 +137,11 @@ class CausalSelfAttention(nn.Module):
             # q: b, nh, 1, d   k: b, nh, d, n ==> b, nh, 1, n
             att = (q @ self.k_cache.transpose(-2, -1)) * (1.0 / math.sqrt(self.k_cache.size(-1)))
             if self.first_pass:
-                assert att.size() == (B, self.n_head, N, N)
-                att = att.masked_fill(self.bias[:,:,:q.size(2),:self.k_cache.size(2)] == 0, float('-inf'))
-                assert att.size() == (B, self.n_head, N, N)
+                assert att.size() == (B, self.n_head, N-n_cached, N)
+                suffix_len = q.size(2)
+                total_len = self.k_cache.size(2)
+                att = att.masked_fill(self.bias[:,:,n_cached:n_cached+suffix_len,:total_len] == 0, float('-inf'))
+                assert att.size() == (B, self.n_head, N-n_cached, N)
             else:
                 # Note, here N=1
                 assert N==1, "Violated single token generation after first pass!!"
@@ -407,15 +408,14 @@ class GPT(nn.Module):
         encoding=idx[0].clone().detach()
         generated_idx=[]
         start_pos = 0
+        logits, _ = self(idx, start_pos=start_pos, encoding=encoding)
+        start_pos += idx.size(1)
         if DEBUG:
             per_loop_time = []
             t = time.time()
         for loop in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond, start_pos=start_pos, encoding=encoding)
-            start_pos += idx_cond.size(dim=1)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
@@ -427,8 +427,10 @@ class GPT(nn.Module):
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
-            generated_idx.extend(idx[0])
-            idx = idx_next
+            generated_idx.extend(idx_next)
+            logits, _ = self(idx_next, start_pos=start_pos, encoding=None)
+            
+            start_pos += 1            
             # print(f"{loop=},{idx=}\n{idx_next=}")
             if DEBUG:
                 per_loop_time.append(time.time() - t)
