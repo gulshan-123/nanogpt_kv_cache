@@ -106,8 +106,8 @@ class CausalSelfAttention(nn.Module):
 
                 new_indices=encoding.tolist()[n_cached:]
                 self.shared_cache.insert_token(new_indices, 
-                                               [t.unsqueeze(2) for t in k.unbind(2)],
-                                               [t.unsqueeze(2) for t in v.unbind(2)],
+                                               [t.detach().unsqueeze(2) for t in k.unbind(2)],
+                                               [t.detach().unsqueeze(2) for t in v.unbind(2)],
                                                start_node=last_node)
             else:
                 assert self.k_cache is None, "self cache not None?"
@@ -119,8 +119,8 @@ class CausalSelfAttention(nn.Module):
                     indices = encoding.tolist()
                     self.shared_cache.insert_token(
                         indices, 
-                        [t.unsqueeze(2) for t in k.unbind(2)], 
-                        [t.unsqueeze(2) for t in v.unbind(2)]
+                        [t.detach().unsqueeze(2) for t in k.unbind(2)], 
+                        [t.detach().unsqueeze(2) for t in v.unbind(2)]
                     )
         else:
             assert self.k_cache is not None
