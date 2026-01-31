@@ -70,7 +70,11 @@ class CausalSelfAttention(nn.Module):
         assert ((self.k_cache is None) == self.first_pass)
         if self.first_pass and encoding is not None:
             indices = encoding.tolist()
-            k_cached_list, v_cached_list, last_node = self.shared_cache.longest_match(indices)
+            match_indices = indices[:-1]
+            if len(match_indices) > 0:
+                k_cached_list, v_cached_list, last_node = self.shared_cache.longest_match(match_indices)
+            else:
+                k_cached_list, v_cached_list, last_node = [], [], None
             n_cached = len(k_cached_list)
 
             if n_cached > 0:
